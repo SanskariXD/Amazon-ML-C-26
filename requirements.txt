@@ -1,0 +1,10 @@
+numpy==2.2.6
+scipy==1.15.3
+scikit-learn==1.6.1
+pandas==2.2.3
+pyarrow==21.0.0
+lightgbm==4.6.0
+rapidfuzz==3.14.1
+anyascii==0.3.3
+psutil==7.0.0
+nbformat==5.10.4

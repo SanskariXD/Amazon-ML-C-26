@@ -1,0 +1,19 @@
+{
+  "seed": 2026,
+  "fit_entities": 15000,
+  "tune_entities": 3000,
+  "dev_entities": 3000,
+  "holdout_entities": 10000,
+  "query_batch": 128,
+  "target_shard": 25000,
+  "vocabulary_sample": 40000,
+  "max_features": 60000,
+  "top_k_per_view": 20,
+  "country_block": false,
+  "rounds": 300,
+  "num_leaves": 31,
+  "min_child_samples": 40,
+  "two_stage": false,
+  "folds": 3,
+  "experiment_id": "E001"
+}

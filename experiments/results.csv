@@ -1,0 +1,1 @@
+experiment_id,date,git_commit,description,hypothesis,blocking_method,candidate_recall,entity_candidate_recall,avg_candidates,p99_candidates,model,features,negative_strategy,validation_entities,precision,recall,macro_f0.5,singleton_accuracy,india_f0.5,us_f0.5,threshold_method,runtime,peak_ram,gpu_used,notes,promoted

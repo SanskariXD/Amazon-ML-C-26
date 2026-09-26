@@ -1,0 +1,24 @@
+{
+  "synthetic_only": true,
+  "not_a_competition_score": true,
+  "unit_tests_passed": 8,
+  "two_stage_pipeline": "PASS",
+  "test_entities": 36,
+  "resume": "PASS",
+  "holdout_untouched": true,
+  "organizer_validator_exit_code": 0,
+  "organizer_validator_stdout": "ML Challenge 2026 \u2014 submission validator\n  test dir: smoke-final/dataset/test\n  required S1 entities: 36\n  valid S2/S3 match IDs: 109\n  matching_results.tsv: 36 rows (8 empty, 28 non-empty).\n  candidate_pairs.tsv: 36 rows (0 empty, 36 non-empty).\n\nPASS \u2014 no blocking issues found. Safe to submit.\n",
+  "notebook_schema_and_code_syntax": "PASS",
+  "tested_versions": {
+    "numpy": "2.2.6",
+    "scipy": "1.15.3",
+    "scikit-learn": "1.6.1",
+    "pandas": "2.2.3",
+    "pyarrow": "21.0.0",
+    "lightgbm": "4.6.0",
+    "rapidfuzz": "3.14.1",
+    "anyascii": "0.3.3",
+    "psutil": "7.0.0",
+    "nbformat": "5.10.4"
+  }
+}
