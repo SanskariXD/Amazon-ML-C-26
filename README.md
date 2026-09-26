@@ -97,3 +97,7 @@ Model library: LightGBM (MIT). Repository implementation is independently writte
 - Saved the chosen code commit in Drive so reconnecting does not silently upgrade the source.
 
 No model is promoted based on these engineering tests. Use measured real-data development F0.5 and resource cost before selecting an architecture. The untouched holdout remains closed during these experiments.
+
+### Continue after the uploaded dataset profile
+
+[Open the continuation notebook in Colab](https://colab.research.google.com/github/SanskariXD/Amazon-ML-C-26/blob/main/notebooks/Amazon_ML_2026_Continue.ipynb) and run all cells. It reuses extracted data, preserves the master notebook, and downloads an audit/retrieval report. The experimental lexical engine avoids exhaustive target scans per query; real recall and runtime must be measured before promotion. See [profile review](research/data_profile_review.md). The original TF-IDF baseline remains available. Reconnect with the continuation notebook to resume its pinned revision.

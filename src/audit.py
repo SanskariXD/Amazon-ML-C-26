@@ -27,8 +27,23 @@ def manifest(dataset):
     return result
 
 
+class CompactRow:
+    """Expose identical Latin/Unicode views without storing identical text twice."""
+    def __init__(self,cursor,values):
+        self.row=sqlite3.Row(cursor,values)
+    def keys(self):return self.row.keys()
+    def __len__(self):return len(self.row)
+    def __iter__(self):return (self[i] for i in range(len(self.row)))
+    def __getitem__(self,key):
+        value=self.row[key]
+        name=self.keys()[key] if isinstance(key,int) else key
+        if value is None and name in ('latin_name','latin_address'):
+            original=name.removeprefix('latin_')
+            if original in self.keys():return self.row[original]
+        return value
+
 def connect(path):
-    db=sqlite3.connect(path); db.row_factory=sqlite3.Row
+    db=sqlite3.connect(path); db.row_factory=CompactRow
     db.execute('PRAGMA cache_size=-65536');db.execute('PRAGMA temp_store=FILE')
     return db
 
@@ -84,10 +99,11 @@ def build(dataset, work, seed, checkpoint=None, use_local=True):
                 if position<=done:continue
                 if not row['entity_id'].startswith(f'S{k}-'): raise ValueError('Incorrect source prefix')
                 r=record(row)
-                batch.append((s,r['entity_id'],k,r['country'],r['name'],r['address'],r['latin_name'],r['latin_address'],partition(r['entity_id'],seed),hash_id(r['entity_id'],seed)))
+                batch.append((s,r['entity_id'],k,r['country'],r['name'],r['address'],None if r['latin_name']==r['name'] else r['latin_name'],None if r['latin_address']==r['address'] else r['latin_address'],partition(r['entity_id'],seed),hash_id(r['entity_id'],seed)))
                 if len(batch)>=10000:
                     db.executemany('INSERT INTO records VALUES (?,?,?,?,?,?,?,?,?,?)',batch)
                     db.execute('INSERT OR REPLACE INTO ingest VALUES (?,?)',(key,position));commit();batch=[]
+                    if position%100000==0:print(f'Prepared {s} source {k}: {position:,} rows',flush=True)
             db.executemany('INSERT INTO records VALUES (?,?,?,?,?,?,?,?,?,?)',batch)
             db.execute('INSERT OR REPLACE INTO ingest VALUES (?,?)',(key,position));commit()
             print(f'Prepared {s} source {k}',flush=True)
@@ -103,8 +119,8 @@ def build(dataset, work, seed, checkpoint=None, use_local=True):
         if position%10000==0:
             db.execute('INSERT OR REPLACE INTO ingest VALUES (?,?)',(key,position));commit()
     db.execute('INSERT OR REPLACE INTO ingest VALUES (?,?)',(key,position));commit()
-    db.execute('CREATE INDEX IF NOT EXISTS records_query ON records(split,source,part,h)')
-    db.execute('CREATE INDEX IF NOT EXISTS records_country ON records(split,country,source,id)')
+    db.execute('CREATE INDEX IF NOT EXISTS records_query ON records(split,source,part,h) WHERE source=1')
+    db.execute('CREATE INDEX IF NOT EXISTS records_country ON records(split,country,source,id) WHERE source=1')
     db.execute('CREATE INDEX IF NOT EXISTS truth_target ON truth(t)');commit()
     checks={
       'missing_truth_rows':db.execute("SELECT COUNT(*) FROM records r LEFT JOIN truth_entities g ON r.id=g.q WHERE r.split='train' AND r.source=1 AND g.q IS NULL").fetchone()[0],

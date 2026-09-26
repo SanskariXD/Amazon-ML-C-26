@@ -35,11 +35,12 @@ def make_data(root):
 
 def main():
     import argparse
-    ap=argparse.ArgumentParser();ap.add_argument('--root');args=ap.parse_args()
+    ap=argparse.ArgumentParser();ap.add_argument('--root');ap.add_argument('--engine',choices=['tfidf','lexical'],default='tfidf');args=ap.parse_args()
     root=Path(args.root or tempfile.mkdtemp(prefix='er-smoke-')).resolve();root.mkdir(parents=True,exist_ok=True)
     make_data(root/'dataset')
     cfg=json.loads(Path('configs/baseline.json').read_text())
     cfg.update(fit_entities=150,tune_entities=30,dev_entities=30,holdout_entities=30,query_batch=40,target_shard=200,vocabulary_sample=500,max_features=1500,top_k_per_view=5,rounds=25,min_child_samples=4,two_stage=True,experiment_id='SMOKE_ONLY')
+    cfg.update(retrieval_engine=args.engine,posting_buckets=4,max_key_postings=2048)
     atomic_json(root/'smoke.json',cfg)
     cmd=[sys.executable,'-m','src.pipeline','--dataset',str(root/'dataset'),'--work',str(root/'work'),'--config',str(root/'smoke.json')]
     subprocess.run(cmd+['--stage','baseline'],check=True)

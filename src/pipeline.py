@@ -14,7 +14,7 @@ import lightgbm as lgb
 import numpy as np
 import pandas as pd
 import psutil
-from . import audit, blocking, features, decide, submission
+from . import audit, blocking, features, decide, submission, retrieval
 from .metric import evaluate
 from .runtime import atomic_json, resources, signature, stage_signature
 from .train_stage1 import train
@@ -42,8 +42,8 @@ def feature_shards(db,work,cfg,part):
     paths=artifact_paths(work)
     root=paths['features']/part;root.mkdir(parents=True,exist_ok=True)
     if (root/'complete.json').exists():return json.loads((root/'complete.json').read_text())
-    ix=blocking.build_index(db,split,paths['index'],cfg)
-    retriever=blocking.Retriever(ix,cfg)
+    ix=retrieval.build_index(db,split,paths['index'],cfg)
+    retriever=retrieval.Retriever(db,split,ix,cfg)
     if part=='test':cursor=db.execute("SELECT * FROM records WHERE split='test' AND source=1 ORDER BY id")
     else:cursor=db.execute("SELECT * FROM records WHERE split='train' AND source=1 AND part=? ORDER BY h LIMIT ?",(part,cfg[f'{part}_entities']))
     shards=[];i=0;macro=0
@@ -65,8 +65,8 @@ def feature_shards(db,work,cfg,part):
                 truth=audit.truth_for(db,[r['id'] for r in chunk]) if split=='train' else {}
                 output=[]
                 for q,c in zip(chunk,candidate_chunk):
-                    for t,retrieval in sorted(c.items()):
-                        output.append([q['id'],t,int(t in truth.get(q['id'],set()))]+features.pair(q,targets[t],retrieval))
+                    for t,retrieval_features in sorted(c.items()):
+                        output.append([q['id'],t,int(t in truth.get(q['id'],set()))]+features.pair(q,targets[t],retrieval_features))
                 frame=pd.DataFrame(output,columns=['q','t','y']+features.NAMES)
                 for c in features.NAMES:frame[c]=frame[c].astype('float32')
                 parquet_atomic(frame,root/f'{stem}.parquet')
@@ -224,7 +224,8 @@ def main():
     prepared_key=stage_signature({'seed':cfg['seed']},manifest,['audit.py','normalize.py','split.py'])
     shared=Path(args.work)/'_shared'
     prepared=shared/'prepared'/prepared_key
-    index_key=stage_signature({k:cfg[k] for k in ('target_shard','vocabulary_sample','max_features')},prepared_key,['blocking.py'])
+    index_params={k:cfg.get(k) for k in ('retrieval_engine','target_shard','vocabulary_sample','max_features','country_block','posting_buckets','max_key_postings')}
+    index_key=stage_signature(index_params,prepared_key,['blocking.py','lexical.py','retrieval.py'])
     feature_params={k:cfg[k] for k in ('seed','fit_entities','tune_entities','dev_entities','holdout_entities','query_batch','top_k_per_view','country_block')}
     feature_params['search_batch']=cfg.get('search_batch',cfg['query_batch'])
     feature_key=stage_signature(feature_params,index_key,['features.py','pipeline.py'])
@@ -243,7 +244,7 @@ def main():
     atomic_json(work/'dataset_profile.json',profile)
     if cfg['country_block'] and profile['checks']['cross_country_pairs']:raise ValueError('Country blocking would discard known matches')
     if args.stage=='audit':return
-    if args.stage=='index':blocking.build_index(db,'train',paths['index'],cfg);return
+    if args.stage=='index':retrieval.build_index(db,'train',paths['index'],cfg);return
     if args.stage=='benchmark':
         from .benchmark import benchmark
         report=benchmark(db,work,cfg,paths['index']);print(json.dumps(report,indent=2));return
@@ -274,7 +275,7 @@ def write_experiment(work,cfg,report):
     try:commit=subprocess.check_output(['git','rev-parse','HEAD'],text=True,stderr=subprocess.DEVNULL).strip()
     except subprocess.SubprocessError:commit='uncommitted'
     row={k:report.get(k,'') for k in fields}
-    row.update(date=time.strftime('%Y-%m-%d'),git_commit=commit,description='Independent baseline',hypothesis='Full-pool retrieval + lexical GBDT',blocking_method='3-view sharded TF-IDF',model='LightGBM stage2' if cfg['two_stage'] else 'LightGBM',features=len(features.NAMES),negative_strategy='all retrieved negatives for sampled fit entities',validation_entities=report['entities'],threshold_method=report['rule']['method'],runtime=report['runtime_seconds'],peak_ram=report['peak_ram_gb'],promoted=False)
+    row.update(date=time.strftime('%Y-%m-%d'),git_commit=commit,description='Independent baseline',hypothesis='Full-pool retrieval + lexical GBDT',blocking_method=cfg.get('retrieval_engine','tfidf'),model='LightGBM stage2' if cfg['two_stage'] else 'LightGBM',features=len(features.NAMES),negative_strategy='all retrieved negatives for sampled fit entities',validation_entities=report['entities'],threshold_method=report['rule']['method'],runtime=report['runtime_seconds'],peak_ram=report['peak_ram_gb'],promoted=False)
     for c,key in [('India','india_f0.5'),('US','us_f0.5')]:row[key]=report['by_country'].get(c,{}).get('macro_f0.5','')
     path=work/'experiments/results.csv'
     with path.open('w',newline='') as f:w=csv.DictWriter(f,fieldnames=fields);w.writeheader();w.writerow(row)
