@@ -44,13 +44,13 @@ def main():
     cmd=[sys.executable,'-m','src.pipeline','--dataset',str(root/'dataset'),'--work',str(root/'work'),'--config',str(root/'smoke.json')]
     subprocess.run(cmd+['--stage','baseline'],check=True)
     latest=json.loads((root/'work/latest_run.json').read_text());work=Path(latest['work'])
-    from .pipeline import load_models,inference
-    db=connect(work/'records.sqlite');models,stage2=load_models(work/'models')
+    from .pipeline import load_models,inference,artifact_paths
+    db=connect(artifact_paths(work)['prepared']/'records.sqlite');models,stage2=load_models(work/'models')
     inference(db,work,cfg,models,stage2)
     result=validate(work/'outputs/matching_results.tsv',work/'outputs/candidate_pairs.tsv',db)
     assert result['entities']==36
     # The external holdout remains untouched by the smoke baseline run.
-    assert not (work/'features/holdout').exists()
+    assert not (artifact_paths(work)['features']/'holdout').exists()
     # Re-running resumes completed features and models, without modifying their timestamps.
     before={str(p):p.stat().st_mtime_ns for p in (work/'models').glob('*.txt')}
     subprocess.run(cmd+['--stage','baseline'],check=True,stdout=subprocess.DEVNULL)

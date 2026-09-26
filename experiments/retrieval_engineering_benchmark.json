@@ -1,0 +1,15 @@
+{
+  "synthetic_only": true,
+  "queries": 36,
+  "micro_batch": 4,
+  "candidate_results_identical": true,
+  "matrix_load_calls": {
+    "previous": 27,
+    "updated": 3
+  },
+  "wall_seconds": {
+    "previous": 0.08250257899999269,
+    "updated": 0.013694053000108397
+  },
+  "note": "Small local-cache benchmark, not an estimate of competition-scale speedup."
+}

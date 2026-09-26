@@ -1,13 +1,13 @@
 {
   "synthetic_only": true,
   "not_a_competition_score": true,
-  "unit_tests_passed": 8,
+  "unit_tests_passed": 13,
   "two_stage_pipeline": "PASS",
   "test_entities": 36,
   "resume": "PASS",
   "holdout_untouched": true,
   "organizer_validator_exit_code": 0,
-  "organizer_validator_stdout": "ML Challenge 2026 \u2014 submission validator\n  test dir: smoke-final/dataset/test\n  required S1 entities: 36\n  valid S2/S3 match IDs: 109\n  matching_results.tsv: 36 rows (8 empty, 28 non-empty).\n  candidate_pairs.tsv: 36 rows (0 empty, 36 non-empty).\n\nPASS \u2014 no blocking issues found. Safe to submit.\n",
+  "organizer_validator_stdout": "ML Challenge 2026 \u2014 submission validator\n  test dir: /workspace/scratch/0b8d72bb68a5/smoke-v2-local/dataset/test\n  required S1 entities: 36\n  valid S2/S3 match IDs: 109\n  matching_results.tsv: 36 rows (8 empty, 28 non-empty).\n  candidate_pairs.tsv: 36 rows (0 empty, 36 non-empty).\n\nPASS \u2014 no blocking issues found. Safe to submit.\n",
   "notebook_schema_and_code_syntax": "PASS",
   "tested_versions": {
     "numpy": "2.2.6",
@@ -20,5 +20,12 @@
     "anyascii": "0.3.3",
     "psutil": "7.0.0",
     "nbformat": "5.10.4"
-  }
+  },
+  "interrupted_retrieval_resume": "PASS",
+  "shared_model_experiment_feature_cache": "PASS",
+  "local_database_and_index_cache": "PASS",
+  "blocking_benchmark_command": "PASS on synthetic full target pool",
+  "strict_country_transfer_command": "PASS on synthetic data",
+  "preliminary_profile_without_database": "PASS",
+  "compact_report_export": "PASS"
 }

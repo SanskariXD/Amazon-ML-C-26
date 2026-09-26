@@ -15,5 +15,7 @@
   "min_child_samples": 40,
   "two_stage": false,
   "folds": 3,
-  "experiment_id": "E001"
+  "experiment_id": "E001",
+  "search_batch": 4096,
+  "benchmark_entities": 256
 }

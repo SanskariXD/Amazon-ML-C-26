@@ -34,5 +34,17 @@ def sha256(path):
 
 def signature(config, dataset_manifest):
     h=hashlib.sha256(json.dumps([config,dataset_manifest],sort_keys=True).encode())
+    import importlib.metadata
+    for name in ('numpy','scipy','scikit-learn','lightgbm','anyascii','pyarrow'):
+        h.update(f'{name}={importlib.metadata.version(name)}'.encode())
     for p in sorted(Path(__file__).parent.glob('*.py')): h.update(p.read_bytes())
+    return h.hexdigest()[:16]
+
+
+def stage_signature(params, manifest, modules):
+    """Stage-specific cache key; changing a model need not redo normalization/retrieval."""
+    import importlib.metadata
+    versions={p:importlib.metadata.version(p) for p in ('numpy','scipy','scikit-learn','anyascii','pyarrow')}
+    h=hashlib.sha256(json.dumps([params,manifest,versions],sort_keys=True).encode())
+    for name in sorted(modules):h.update((Path(__file__).parent/name).read_bytes())
     return h.hexdigest()[:16]

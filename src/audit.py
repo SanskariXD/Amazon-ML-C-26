@@ -1,5 +1,9 @@
 """Stream official TSVs into an indexed working database; originals stay unchanged."""
 import csv
+import hashlib
+import os
+import shutil
+import time
 import json
 from pathlib import Path
 import sqlite3
@@ -38,12 +42,34 @@ def read_tsv(path, expected):
             yield row
 
 
-def build(dataset, work, seed):
+def build(dataset, work, seed, checkpoint=None, use_local=True):
     work=Path(work);work.mkdir(parents=True,exist_ok=True)
     dest=work/'records.sqlite'
     if (work/'dataset_profile.json').exists() and dest.exists(): return dest
+    local_cache=os.environ.get('ER_LOCAL_CACHE')
+    if local_cache and use_local:
+        key=hashlib.sha256(str(work.resolve()).encode()).hexdigest()[:16]
+        local=Path(local_cache)/'prepared'/key;local.mkdir(parents=True,exist_ok=True)
+        for name in ('records.sqlite','records.tmp.sqlite','dataset_profile.json'):
+            source=work/name;target=local/name
+            if source.exists() and not target.exists():shutil.copyfile(source,target)
+        last=[time.monotonic()]
+        def persist(connection):
+            if time.monotonic()-last[0]<120:return
+            temporary=work/'records.snapshot.sqlite'
+            with sqlite3.connect(temporary) as target:connection.backup(target)
+            temporary.replace(work/'records.tmp.sqlite');last[0]=time.monotonic()
+            print('Normalized database checkpoint saved',flush=True)
+        result=build(dataset,local,seed,checkpoint=persist,use_local=False)
+        temporary=work/'records.snapshot.sqlite';shutil.copyfile(result,temporary);temporary.replace(dest)
+        atomic_json(work/'dataset_profile.json',json.loads((local/'dataset_profile.json').read_text()))
+        (work/'records.tmp.sqlite').unlink(missing_ok=True)
+        return dest
     tmp=work/'records.tmp.sqlite'
     db=connect(tmp)
+    def commit():
+        db.commit()
+        if checkpoint:checkpoint(db)
     db.execute('CREATE TABLE IF NOT EXISTS records (split TEXT,id TEXT,source INTEGER,country TEXT,name TEXT,address TEXT,latin_name TEXT,latin_address TEXT,part TEXT,h INTEGER,PRIMARY KEY(split,id))')
     db.execute('CREATE TABLE IF NOT EXISTS truth(q TEXT,t TEXT,PRIMARY KEY(q,t))')
     db.execute('CREATE TABLE IF NOT EXISTS truth_entities(q TEXT PRIMARY KEY)')
@@ -61,9 +87,9 @@ def build(dataset, work, seed):
                 batch.append((s,r['entity_id'],k,r['country'],r['name'],r['address'],r['latin_name'],r['latin_address'],partition(r['entity_id'],seed),hash_id(r['entity_id'],seed)))
                 if len(batch)>=10000:
                     db.executemany('INSERT INTO records VALUES (?,?,?,?,?,?,?,?,?,?)',batch)
-                    db.execute('INSERT OR REPLACE INTO ingest VALUES (?,?)',(key,position));db.commit();batch=[]
+                    db.execute('INSERT OR REPLACE INTO ingest VALUES (?,?)',(key,position));commit();batch=[]
             db.executemany('INSERT INTO records VALUES (?,?,?,?,?,?,?,?,?,?)',batch)
-            db.execute('INSERT OR REPLACE INTO ingest VALUES (?,?)',(key,position));db.commit()
+            db.execute('INSERT OR REPLACE INTO ingest VALUES (?,?)',(key,position));commit()
             print(f'Prepared {s} source {k}',flush=True)
     key='train_ground_truth.tsv'
     progress=db.execute('SELECT rows FROM ingest WHERE file=?',(key,)).fetchone()
@@ -75,11 +101,11 @@ def build(dataset, work, seed):
         if len(targets)!=len(set(targets)):raise ValueError('Duplicate ground-truth target')
         db.executemany('INSERT INTO truth VALUES (?,?)',[(q,t) for t in targets])
         if position%10000==0:
-            db.execute('INSERT OR REPLACE INTO ingest VALUES (?,?)',(key,position));db.commit()
-    db.execute('INSERT OR REPLACE INTO ingest VALUES (?,?)',(key,position));db.commit()
+            db.execute('INSERT OR REPLACE INTO ingest VALUES (?,?)',(key,position));commit()
+    db.execute('INSERT OR REPLACE INTO ingest VALUES (?,?)',(key,position));commit()
     db.execute('CREATE INDEX IF NOT EXISTS records_query ON records(split,source,part,h)')
     db.execute('CREATE INDEX IF NOT EXISTS records_country ON records(split,country,source,id)')
-    db.execute('CREATE INDEX IF NOT EXISTS truth_target ON truth(t)');db.commit()
+    db.execute('CREATE INDEX IF NOT EXISTS truth_target ON truth(t)');commit()
     checks={
       'missing_truth_rows':db.execute("SELECT COUNT(*) FROM records r LEFT JOIN truth_entities g ON r.id=g.q WHERE r.split='train' AND r.source=1 AND g.q IS NULL").fetchone()[0],
       'invalid_truth_queries':db.execute("SELECT COUNT(*) FROM truth_entities g LEFT JOIN records r ON r.split='train' AND r.id=g.q AND r.source=1 WHERE r.id IS NULL").fetchone()[0],

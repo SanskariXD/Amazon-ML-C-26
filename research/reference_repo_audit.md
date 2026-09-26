@@ -67,7 +67,7 @@ Labels never train normalization. Training positives must be retrieved; unretrie
 | Optional two-stage fit | target below 8 GB | three stage-1 fold models + stage-2 | OOF arrays and contextual matrices add copies |
 | Inference/export | roughly 0.5–3 GB | features + score shards + two TSVs | streamed, checkpointed per query shard |
 
-At 60 candidates/S1, one million S1 implies up to 60 million rows: **6.48 GB for numeric feature values alone**, before IDs, scores and compression. Free Drive quota may be the binding constraint. Runtime cannot be responsibly estimated before a real full-pool benchmark. The bounded implementation rescans target index shards for each query batch, trading speed/I/O for predictable memory. It is not yet a proven deadline-ready full-scale pipeline.
+At 60 candidates/S1, one million S1 implies up to 60 million rows: **6.48 GB for numeric feature values alone**, before IDs, scores and compression. Free Drive quota may be the binding constraint. Runtime cannot be responsibly estimated before a real full-pool benchmark. The updated bounded implementation loads index shards once per retrieval batch (up to 4,096 queries), multiplying in smaller blocks and caching indexes on local Colab disk. This reduces repeated I/O but still requires a real full-target-pool benchmark. It is not yet a proven deadline-ready full-scale pipeline.
 
 ## Experiment sequence
 
@@ -75,11 +75,11 @@ At 60 candidates/S1, one million S1 implies up to 60 million rows: **6.48 GB for
 2. E001: single-stage default, real full target pool; profile, candidate recall/distribution, memory, time, local macro F0.5 and country/error breakdowns.
 3. E002: identical retrieval, inner-OOF two-stage query context. Promote only with development improvement; preserve untouched holdout.
 4. E003–E005: k=10/20/30 per view, country blocking only after data evidence, reverse retrieval implementation only after throughput and recall gaps are known.
-5. Later: calibration, hard-negative second round, XGBoost/CatBoost ablations, strict leave-country-out validation and graph-wide exclusivity. These are pending experiments, not claimed implemented results.
+5. Later: calibration, hard-negative second round, XGBoost/CatBoost ablations, graph-wide exclusivity. Strict leave-country-out evaluation is now implemented, but real-data results are pending. Other listed additions remain pending experiments, not claimed implemented results.
 6. Neural reranking only after plateau and licence/resource checks.
 
 ## Rules reviewed and open items
 
 User-supplied statement: every test S1 exactly once; only existing test S2/S3 IDs; no duplicates; empty singleton list; final matches subset of exact scored candidates; MIT/Apache-2.0 final model, at most 8B parameters. LightGBM is the only model used here. Uploaded guidelines also prohibit plagiarism and describe submission limits; no external business lookups are used. The statement asks for the filled organizer documentation template; bundled guidelines mention a shorter approach document. Check the current portal for any superseding announcement before final submission. No competition portal access or live leaderboard verification has occurred.
 
-The user's dataset ZIP was not returned by connected Drive exact-name, broader-name or root discovery. A direct file URL is needed for an authenticated fetch here; Colab can also read the named ZIP directly from the user's mounted MyDrive. Real dataset profiling/training, full-scale timing and organizer validation on real test outputs remain pending.
+Update after the user supplied a direct URL: authenticated metadata confirms the named ZIP is 1,094,823,222 bytes. Connector fetch returns HTTP 413 because its limit is 268,435,456 bytes. Unauthenticated download redirects to sign-in. The notebook reads the original private ZIP through mounted MyDrive and exports a compact review report. Real dataset profiling/training, full-scale timing and organizer validation on real test outputs remain pending; no public-sharing change was made.

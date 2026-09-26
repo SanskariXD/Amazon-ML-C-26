@@ -3,6 +3,8 @@ import argparse
 import csv
 import json
 import os
+import hashlib
+import shutil
 from pathlib import Path
 import resource
 import subprocess
@@ -14,7 +16,7 @@ import pandas as pd
 import psutil
 from . import audit, blocking, features, decide, submission
 from .metric import evaluate
-from .runtime import atomic_json, resources, signature
+from .runtime import atomic_json, resources, signature, stage_signature
 from .train_stage1 import train
 from .train_stage2 import train_stack, score
 
@@ -29,41 +31,56 @@ def query_rows(db,part,limit):
     return list(db.execute("SELECT * FROM records WHERE split='train' AND source=1 AND part=? ORDER BY h LIMIT ?",(part,limit)))
 
 
+def artifact_paths(work):
+    marker=work/'artifact_paths.json'
+    return {k:Path(v) for k,v in json.loads(marker.read_text()).items()} if marker.exists() else {
+        'prepared':work,'index':work/'candidates'/'index','features':work/'features'}
+
+
 def feature_shards(db,work,cfg,part):
     split='test' if part=='test' else 'train'
-    root=work/'features'/part;root.mkdir(parents=True,exist_ok=True)
+    paths=artifact_paths(work)
+    root=paths['features']/part;root.mkdir(parents=True,exist_ok=True)
     if (root/'complete.json').exists():return json.loads((root/'complete.json').read_text())
-    ix=blocking.build_index(db,split,work/'candidates'/'index',cfg)
+    ix=blocking.build_index(db,split,paths['index'],cfg)
     retriever=blocking.Retriever(ix,cfg)
-    # Test queries are streamed. Training/evaluation entity samples are deterministic.
     if part=='test':cursor=db.execute("SELECT * FROM records WHERE split='test' AND source=1 ORDER BY id")
     else:cursor=db.execute("SELECT * FROM records WHERE split='train' AND source=1 AND part=? ORDER BY h LIMIT ?",(part,cfg[f'{part}_entities']))
-    shards=[];i=0
+    shards=[];i=0;macro=0
+    search_batch=max(cfg['query_batch'],cfg.get('search_batch',cfg['query_batch']))
     while True:
-        rows=cursor.fetchmany(cfg['query_batch'])
+        rows=cursor.fetchmany(search_batch)
         if not rows:break
-        stem=f'{i:06d}';path=root/f'{stem}.parquet';meta_path=root/f'{stem}.json'
-        if not (path.exists() and meta_path.exists()):
-            candidates=retriever.query(rows)
-            targets=features.target_records(db,split,{t for c in candidates for t in c})
-            truth=audit.truth_for(db,[r['id'] for r in rows]) if split=='train' else {}
-            output=[]
-            for q,c in zip(rows,candidates):
-                for t,retrieval in sorted(c.items()):
-                    output.append([q['id'],t,int(t in truth.get(q['id'],set()))]+features.pair(q,targets[t],retrieval))
-            frame=pd.DataFrame(output,columns=['q','t','y']+features.NAMES)
-            for c in features.NAMES:frame[c]=frame[c].astype('float32')
-            parquet_atomic(frame,path)
-            atomic_json(meta_path,{'queries':[r['id'] for r in rows],'pairs':len(frame)})
-        shards.append(stem);i+=1
-        if i%10==0:print(f'{part}: {i} complete query shards',flush=True)
+        chunks=[rows[j:j+cfg['query_batch']] for j in range(0,len(rows),cfg['query_batch'])]
+        names=[f'{i+j:06d}' for j in range(len(chunks))]
+        complete=lambda stem:(root/f'{stem}.parquet').exists() and (root/f'{stem}.json').exists()
+        if not all(complete(stem) for stem in names):
+            checkpoint=root/f'retrieval_{macro:06d}.json'
+            candidates=retriever.query(rows,checkpoint)
+            offset=0
+            for stem,chunk in zip(names,chunks):
+                candidate_chunk=candidates[offset:offset+len(chunk)];offset+=len(chunk)
+                if complete(stem):continue
+                targets=features.target_records(db,split,{t for c in candidate_chunk for t in c})
+                truth=audit.truth_for(db,[r['id'] for r in chunk]) if split=='train' else {}
+                output=[]
+                for q,c in zip(chunk,candidate_chunk):
+                    for t,retrieval in sorted(c.items()):
+                        output.append([q['id'],t,int(t in truth.get(q['id'],set()))]+features.pair(q,targets[t],retrieval))
+                frame=pd.DataFrame(output,columns=['q','t','y']+features.NAMES)
+                for c in features.NAMES:frame[c]=frame[c].astype('float32')
+                parquet_atomic(frame,root/f'{stem}.parquet')
+                atomic_json(root/f'{stem}.json',{'queries':[r['id'] for r in chunk],'pairs':len(frame)})
+            checkpoint.unlink(missing_ok=True)
+        shards+=names;i+=len(chunks);macro+=1
+        print(f'{part}: {i} complete query shards',flush=True)
     if not shards:raise ValueError(f'No entities for partition {part}')
     obj={'shards':shards,'full_target_pool':True};atomic_json(root/'complete.json',obj)
     return obj
 
 
 def frames(work,part):
-    root=work/'features'/part
+    root=artifact_paths(work)['features']/part
     obj=json.loads((root/'complete.json').read_text())
     for stem in obj['shards']:
         yield stem,pd.read_parquet(root/f'{stem}.parquet'),json.loads((root/f'{stem}.json').read_text())['queries']
@@ -73,7 +90,7 @@ def fit(db,work,cfg):
     model_dir=work/'models';model_dir.mkdir(exist_ok=True)
     if (model_dir/'complete.json').exists():return load_models(model_dir)
     feature_shards(db,work,cfg,'fit')
-    paths=list((work/'features'/'fit').glob('[0-9]*.json'))
+    paths=list((artifact_paths(work)['features']/'fit').glob('[0-9]*.json'))
     count=sum(json.loads(p.read_text())['pairs'] for p in paths)
     # Includes pandas strings, copies during fitting and LightGBM histogram overhead.
     estimate=count*(len(features.NAMES)*4+180)*5
@@ -181,7 +198,7 @@ def main():
     ap.add_argument('--dataset',required=True,help='Folder containing train/ and test/')
     ap.add_argument('--work',required=True,help='Persistent output root (Drive in Colab)')
     ap.add_argument('--config',default='configs/baseline.json')
-    ap.add_argument('--stage',choices=['audit','index','baseline','holdout','infer','validate','package'],default='baseline')
+    ap.add_argument('--stage',choices=['audit','index','benchmark','baseline','holdout','infer','validate','package','report','loco','profile'],default='baseline')
     args=ap.parse_args();cfg=json.loads(Path(args.config).read_text())
     Path(args.work).mkdir(parents=True,exist_ok=True)
     rt=resources(args.work);print(json.dumps(rt),flush=True)
@@ -193,15 +210,46 @@ def main():
         available=psutil.virtual_memory().available
         cfg['target_shard']=max(100,min(cfg['target_shard'],int(available*.08/5000)))
         cfg['query_batch']=max(1,min(cfg['query_batch'],int(available*.025/(cfg['target_shard']*12))))
+        cfg['search_batch']=max(cfg['query_batch'],min(cfg.get('search_batch',4096),int(available*.04/30000)))
         atomic_json(work/'config.json',cfg)
     atomic_json(Path(args.work)/'latest_run.json',{'run_id':run_id,'work':str(work.resolve())})
     atomic_json(work/'dataset_manifest.json',manifest);atomic_json(work/'runtime.json',rt)
     print(f'Run directory: {work}',flush=True)
-    start=time.time();db=audit.connect(audit.build(args.dataset,work,cfg['seed']))
-    profile=json.loads((work/'dataset_profile.json').read_text())
+    if args.stage=='profile':
+        from .profile_dataset import profile
+        print(json.dumps(profile(args.dataset,work),indent=2));return
+    if args.stage=='report':
+        from .report import export_report
+        print(export_report(work));return
+    prepared_key=stage_signature({'seed':cfg['seed']},manifest,['audit.py','normalize.py','split.py'])
+    shared=Path(args.work)/'_shared'
+    prepared=shared/'prepared'/prepared_key
+    index_key=stage_signature({k:cfg[k] for k in ('target_shard','vocabulary_sample','max_features')},prepared_key,['blocking.py'])
+    feature_params={k:cfg[k] for k in ('seed','fit_entities','tune_entities','dev_entities','holdout_entities','query_batch','top_k_per_view','country_block')}
+    feature_params['search_batch']=cfg.get('search_batch',cfg['query_batch'])
+    feature_key=stage_signature(feature_params,index_key,['features.py','pipeline.py'])
+    paths={'prepared':prepared,'index':shared/'indexes'/index_key,'features':shared/'features'/feature_key}
+    atomic_json(work/'artifact_paths.json',{k:str(v.resolve()) for k,v in paths.items()})
+    start=time.time();database=audit.build(args.dataset,prepared,cfg['seed'])
+    if os.environ.get('ER_LOCAL_CACHE'):
+        local_key=hashlib.sha256(str(prepared.resolve()).encode()).hexdigest()[:16]
+        local=Path(os.environ['ER_LOCAL_CACHE'])/'prepared'/local_key/'records.sqlite'
+        local.parent.mkdir(parents=True,exist_ok=True)
+        if not local.exists() or local.stat().st_size!=database.stat().st_size:
+            temporary=local.with_suffix('.tmp');shutil.copyfile(database,temporary);temporary.replace(local)
+        database=local
+    db=audit.connect(database)
+    profile=json.loads((prepared/'dataset_profile.json').read_text())
+    atomic_json(work/'dataset_profile.json',profile)
     if cfg['country_block'] and profile['checks']['cross_country_pairs']:raise ValueError('Country blocking would discard known matches')
     if args.stage=='audit':return
-    if args.stage=='index':blocking.build_index(db,'train',work/'candidates'/'index',cfg);return
+    if args.stage=='index':blocking.build_index(db,'train',paths['index'],cfg);return
+    if args.stage=='benchmark':
+        from .benchmark import benchmark
+        report=benchmark(db,work,cfg,paths['index']);print(json.dumps(report,indent=2));return
+    if args.stage=='loco':
+        from .loco import run_loco
+        print(json.dumps(run_loco(db,work,cfg),indent=2));return
     if args.stage in ('baseline','holdout','infer'):
         models,stage2=fit(db,work,cfg)
         if args.stage=='baseline':report=tune_and_evaluate(db,work,cfg,models,stage2)
@@ -210,8 +258,11 @@ def main():
             if not (work/'models/decision.json').exists():raise RuntimeError('Run baseline before inference')
             report=inference(db,work,cfg,models,stage2);official_validate(args.dataset,work)
         report.update(runtime_seconds=time.time()-start,peak_ram_gb=resource.getrusage(resource.RUSAGE_SELF).ru_maxrss/2**20,gpu_used=False)
-        atomic_json(work/'experiments'/f'{args.stage}_run.json',report);print(json.dumps(report,indent=2))
-        if args.stage=='baseline':write_experiment(work,cfg,report)
+        timing_path=work/'experiments'/f'{args.stage}_run.json'
+        if not timing_path.exists():atomic_json(timing_path,report)
+        atomic_json(work/'experiments'/f'{args.stage}_last_invocation.json',report)
+        print(json.dumps(report,indent=2))
+        if args.stage=='baseline' and not (work/'experiments/results.csv').exists():write_experiment(work,cfg,report)
     if args.stage in ('validate','package'):official_validate(args.dataset,work)
     if args.stage=='package':
         from .package import package
